@@ -1,46 +1,47 @@
+# .github/workflows/cd-promote-dev.yml
 name: CD – Promote dev → master
 
-# 1. On pousse (merge) sur dev
 on:
   push:
     branches:
       - dev
 
-# 2. Permissions nécessaires pour créer et merger une PR
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  # Job de test
   validate:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Check Docker Compose version
+        run: docker compose version
+
       - name: Build & test with Docker Compose
         run: |
-          # Lancement des containers, exit code du premier container qui se termine
-          docker-compose up --build --abort-on-container-exit
+          # build et run des services, on arrête dès qu'un container se termine
+          docker compose up --build --abort-on-container-exit
           EXIT_CODE=$?
-          # Toujours down pour nettoyer
-          docker-compose down --volumes --remove-orphans
-          # On échoue si un container a eu une erreur
+          # cleanup
+          docker compose down --volumes --remove-orphans
+          # si erreur, on échoue le job
           if [ $EXIT_CODE -ne 0 ]; then
             echo "::error::Docker Compose failed with exit code $EXIT_CODE"
             exit $EXIT_CODE
           fi
 
-  # Job de promotion (création + merge de la PR)
   promote:
     needs: validate
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
+      - name: Checkout dev branch
         uses: actions/checkout@v3
         with:
-          # On checkout bien la branche dev
           ref: dev
 
       - name: Create (or reuse) and merge PR dev → master
@@ -49,32 +50,17 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
-            const head = 'dev';
-            const base = 'master';
-            // 1. Cherche une PR ouverte dev→master
-            const { data: prs } = await github.rest.pulls.list({
-              owner, repo,
-              head: `${owner}:${head}`,
-              base,
-              state: 'open'
-            });
-            let pr;
-            if (prs.length > 0) {
-              pr = prs[0];
-            } else {
-              // 2. Crée la PR si aucune n'existe
+            const head = 'dev', base = 'master';
+            // cherche une PR ouverte dev→master
+            const { data: prs } = await github.rest.pulls.list({ owner, repo, head: `${owner}:${head}`, base, state: 'open' });
+            let pr = prs[0];
+            if (!pr) {
               const { data } = await github.rest.pulls.create({
-                owner, repo,
-                head,
-                base,
+                owner, repo, head, base,
                 title: 'Automated promotion: dev → master',
                 body: 'Cette PR a été générée automatiquement après un build Docker Compose réussi sur la branche dev.'
               });
               pr = data;
             }
-            // 3. Merge la PR
-            await github.rest.pulls.merge({
-              owner, repo,
-              pull_number: pr.number,
-              merge_method: 'merge'
-            });
+            // fusionne la PR
+            await github.rest.pulls.merge({ owner, repo, pull_number: pr.number, merge_method: 'merge' });
