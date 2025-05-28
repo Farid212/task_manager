@@ -1,3 +1,4 @@
+# .github/workflows/ci-docker-build.yml
 name: CI – Docker Build Check
 
 on:
@@ -11,22 +12,17 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Build client Docker image
         id: client_build
         continue-on-error: true
         run: |
           set +e
-          # build et capture des logs
           docker build -f client/Dockerfile -t client-check client/ > client_build.log 2>&1
-          BUILD_EXIT=$?
-          # expose les logs en output
-          echo "log<<EOF" >> $GITHUB_OUTPUT
-          cat client_build.log >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          # renvoie le code de sortie pour marquer l'étape en échec si besoin
-          if [ $BUILD_EXIT -ne 0 ]; then exit $BUILD_EXIT; fi
+          EXIT_CODE=$?
+          # expose exit code pour la condition suivante
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
 
       - name: Build server Docker image
         id: server_build
@@ -34,27 +30,42 @@ jobs:
         run: |
           set +e
           docker build -f server/Dockerfile -t server-check server/ > server_build.log 2>&1
-          BUILD_EXIT=$?
-          echo "log<<EOF" >> $GITHUB_OUTPUT
-          cat server_build.log >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          if [ $BUILD_EXIT -ne 0 ]; then exit $BUILD_EXIT; fi
+          EXIT_CODE=$?
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
 
       - name: Create issue on Docker build failure
-        if: ${{ steps.client_build.outcome == 'failure' || steps.server_build.outcome == 'failure' }}
-        uses: peter-evans/create-issue@v4
+        if: ${{ steps.client_build.outputs.exit_code != '0' || steps.server_build.outputs.exit_code != '0' }}
+        uses: actions/github-script@v6
         with:
-          title: Docker build failed on PR #${{ github.event.pull_request.number }}
-          labels: ci,docker-build-failure
-          body: |
-            The Docker build failed on PR #${{ github.event.pull_request.number }}.
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const prNumber = context.payload.pull_request.number;
+            const { owner, repo } = context.repo;
 
-            **Client build** – status: ${{ steps.client_build.outcome }}
-            ```
-            ${{ steps.client_build.outputs.log }}
-            ```
+            // lecture des logs
+            const clientLog = fs.readFileSync('client_build.log', 'utf8');
+            const serverLog = fs.readFileSync('server_build.log', 'utf8');
 
-            **Server build** – status: ${{ steps.server_build.outcome }}
-            ```
-            ${{ steps.server_build.outputs.log }}
-            ```
+            // corps de l’issue
+            const body = `
+            ## Docker build failed on PR #${prNumber}
+
+            **Client build** – exit code: ${{ steps.client_build.outputs.exit_code }}
+            \`\`\`
+            ${clientLog}
+            \`\`\`
+
+            **Server build** – exit code: ${{ steps.server_build.outputs.exit_code }}
+            \`\`\`
+            ${serverLog}
+            \`\`\`
+            `;
+
+            await github.issues.create({
+              owner,
+              repo,
+              title: `Docker build failed on PR #${prNumber}`,
+              body,
+              labels: ['ci', 'docker-build-failure'],
+            });
