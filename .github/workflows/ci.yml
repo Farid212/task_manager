@@ -3,8 +3,7 @@ name: CI – Docker Build Check
 
 on:
   pull_request:
-    branches:
-      - dev
+    branches: [dev]
 
 jobs:
   docker-build:
@@ -12,7 +11,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Build client Docker image
         id: client_build
@@ -21,7 +20,6 @@ jobs:
           set +e
           docker build -f client/Dockerfile -t client-check client/ > client_build.log 2>&1
           EXIT_CODE=$?
-          # expose exit code pour la condition suivante
           echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
 
       - name: Build server Docker image
@@ -40,32 +38,31 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const prNumber = context.payload.pull_request.number;
+            const pr = context.payload.pull_request.number;
             const { owner, repo } = context.repo;
-
-            // lecture des logs
+            const clientExit = ${{ steps.client_build.outputs.exit_code }};
+            const serverExit = ${{ steps.server_build.outputs.exit_code }};
             const clientLog = fs.readFileSync('client_build.log', 'utf8');
             const serverLog = fs.readFileSync('server_build.log', 'utf8');
 
-            // corps de l’issue
             const body = `
-            ## Docker build failed on PR #${prNumber}
+            ## Docker build failed on PR #${pr}
 
-            **Client build** – exit code: ${{ steps.client_build.outputs.exit_code }}
+            **Client build** – exit code: ${clientExit}
             \`\`\`
             ${clientLog}
             \`\`\`
 
-            **Server build** – exit code: ${{ steps.server_build.outputs.exit_code }}
+            **Server build** – exit code: ${serverExit}
             \`\`\`
             ${serverLog}
             \`\`\`
             `;
 
-            await github.issues.create({
+            await github.rest.issues.create({
               owner,
               repo,
-              title: `Docker build failed on PR #${prNumber}`,
+              title: `Docker build failed on PR #${pr}`,
               body,
-              labels: ['ci', 'docker-build-failure'],
+              labels: ['ci','docker-build-failure']
             });
