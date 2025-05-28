@@ -1,0 +1,60 @@
+name: CI – Docker Build Check
+
+on:
+  pull_request:
+    branches:
+      - dev
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Build client Docker image
+        id: client_build
+        continue-on-error: true
+        run: |
+          set +e
+          # build et capture des logs
+          docker build -f client/Dockerfile -t client-check client/ > client_build.log 2>&1
+          BUILD_EXIT=$?
+          # expose les logs en output
+          echo "log<<EOF" >> $GITHUB_OUTPUT
+          cat client_build.log >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          # renvoie le code de sortie pour marquer l'étape en échec si besoin
+          if [ $BUILD_EXIT -ne 0 ]; then exit $BUILD_EXIT; fi
+
+      - name: Build server Docker image
+        id: server_build
+        continue-on-error: true
+        run: |
+          set +e
+          docker build -f server/Dockerfile -t server-check server/ > server_build.log 2>&1
+          BUILD_EXIT=$?
+          echo "log<<EOF" >> $GITHUB_OUTPUT
+          cat server_build.log >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          if [ $BUILD_EXIT -ne 0 ]; then exit $BUILD_EXIT; fi
+
+      - name: Create issue on Docker build failure
+        if: ${{ steps.client_build.outcome == 'failure' || steps.server_build.outcome == 'failure' }}
+        uses: peter-evans/create-issue@v4
+        with:
+          title: Docker build failed on PR #${{ github.event.pull_request.number }}
+          labels: ci,docker-build-failure
+          body: |
+            The Docker build failed on PR #${{ github.event.pull_request.number }}.
+
+            **Client build** – status: ${{ steps.client_build.outcome }}
+            ```
+            ${{ steps.client_build.outputs.log }}
+            ```
+
+            **Server build** – status: ${{ steps.server_build.outcome }}
+            ```
+            ${{ steps.server_build.outputs.log }}
+            ```
