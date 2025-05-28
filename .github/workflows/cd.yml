@@ -18,16 +18,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Generate dummy .env for Docker Compose
+        run: |
+          cat <<EOF > .env
+          POSTGRES_USER=ci_user
+          POSTGRES_PASSWORD=ci_pass
+          POSTGRES_DB=ci_db
+          # Ajoute ici d’autres variables si nécessaire
+          EOF
+
       - name: Check Docker Compose version
         run: docker compose version
 
       - name: Build & test with Docker Compose
         run: |
-          # build et run des services, on arrête dès qu'un container se termine
-          docker compose up --build --abort-on-container-exit
+          # build et run des services avec le fichier .env
+          docker compose --env-file ./.env up --build --abort-on-container-exit
           EXIT_CODE=$?
           # cleanup
-          docker compose down --volumes --remove-orphans
+          docker compose --env-file ./.env down --volumes --remove-orphans
           # si erreur, on échoue le job
           if [ $EXIT_CODE -ne 0 ]; then
             echo "::error::Docker Compose failed with exit code $EXIT_CODE"
@@ -52,15 +61,26 @@ jobs:
             const { owner, repo } = context.repo;
             const head = 'dev', base = 'master';
             // cherche une PR ouverte dev→master
-            const { data: prs } = await github.rest.pulls.list({ owner, repo, head: `${owner}:${head}`, base, state: 'open' });
+            const { data: prs } = await github.rest.pulls.list({
+              owner, repo,
+              head: `${owner}:${head}`,
+              base,
+              state: 'open'
+            });
             let pr = prs[0];
             if (!pr) {
               const { data } = await github.rest.pulls.create({
-                owner, repo, head, base,
+                owner, repo,
+                head, base,
                 title: 'Automated promotion: dev → master',
                 body: 'Cette PR a été générée automatiquement après un build Docker Compose réussi sur la branche dev.'
               });
               pr = data;
             }
             // fusionne la PR
-            await github.rest.pulls.merge({ owner, repo, pull_number: pr.number, merge_method: 'merge' });
+            await github.rest.pulls.merge({
+              owner,
+              repo,
+              pull_number: pr.number,
+              merge_method: 'merge'
+            });
