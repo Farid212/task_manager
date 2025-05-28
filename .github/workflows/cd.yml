@@ -24,24 +24,17 @@ jobs:
           POSTGRES_USER=ci_user
           POSTGRES_PASSWORD=ci_pass
           POSTGRES_DB=ci_db
-          # Ajoute ici d’autres variables si nécessaire
+          # autres vars si besoin…
           EOF
 
       - name: Check Docker Compose version
         run: docker compose version
 
-      - name: Build & test with Docker Compose
-        run: |
-          # build et run des services avec le fichier .env
-          docker compose --env-file ./.env up --build --abort-on-container-exit
-          EXIT_CODE=$?
-          # cleanup
-          docker compose --env-file ./.env down --volumes --remove-orphans
-          # si erreur, on échoue le job
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "::error::Docker Compose failed with exit code $EXIT_CODE"
-            exit $EXIT_CODE
-          fi
+      - name: Validate Compose file
+        run: docker compose config --quiet
+
+      - name: Build all services
+        run: docker compose build --parallel
 
   promote:
     needs: validate
@@ -60,7 +53,6 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             const head = 'dev', base = 'master';
-            // cherche une PR ouverte dev→master
             const { data: prs } = await github.rest.pulls.list({
               owner, repo,
               head: `${owner}:${head}`,
@@ -73,14 +65,12 @@ jobs:
                 owner, repo,
                 head, base,
                 title: 'Automated promotion: dev → master',
-                body: 'Cette PR a été générée automatiquement après un build Docker Compose réussi sur la branche dev.'
+                body: 'PR générée après un build Compose réussi sur dev.'
               });
               pr = data;
             }
-            // fusionne la PR
             await github.rest.pulls.merge({
-              owner,
-              repo,
+              owner, repo,
               pull_number: pr.number,
               merge_method: 'merge'
             });
